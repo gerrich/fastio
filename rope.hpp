@@ -25,8 +25,32 @@ struct rope_segment_t {
 // 
 template <typename data_t, typename fill_strategy_t, typename mem_use_strategy_t>
 struct rope_t {
+  typedef data_t data_type;
+  typedef std::list<rope_segment_t> storage_t;
+  
+  struct iterator {
+    iterator(size_t _offset, storage_t::iterator _it)
+      : offset(_offset)
+      , it(_it) 
+    {}
+    size_t offset;
+    storage_t::iterator it;  
+  };
+
   rope_t(): seg_size(1024) {}
 
+  iterator begin() {
+    iterator it(0, storage.begin());
+    if (it.it != storage.end()) {
+      it.offset = it.it->begin;
+    }
+    return it;
+  }
+
+  iterator end() {
+    return iterator(0, storage.end());
+  }
+  
   void push_back(const data_t &data); // add segments as memory needed
   void pop_front();
   data_t& front();
@@ -54,7 +78,6 @@ struct rope_t {
     return seg.sz - seg.end;
   }
 
-  typedef std::list<rope_segment_t> storage_t;
   storage_t storage;
   size_t seg_size;
 };
@@ -100,3 +123,68 @@ data_t& rope_t<data_t, fill_strategy_t, mem_use_strategy_t>::back() {
 }
 
 
+template <typename data_t>
+struct no_aggregate_t {
+  void operator()(data_t &dst, data_t &src) const {
+    // do nothing
+  }
+};
+
+template <typename rope_t, typename compare_t, typename aggregate_t /*= no_aggregate_t<class rope_t::data_type>*/ >
+void merge_aggregate(
+  rope_t &rope_l,
+  rope_t &rope_r,
+  rope_t res,
+  const compare_t &compare=compare_t(),
+  const aggregate_t &aggregate=aggregate_t()
+) {
+
+  while (!rope_l.empty() or !rope_r.empty()) {
+    typename rope_t::data_type &data_l = rope_l.front();
+    typename rope_t::data_type &data_r = rope_r.front();
+
+    int _cmp = compare(data_l, data_r);
+    if (_cmp < 0) {
+      res.push_back(data_l);
+      rope_l.pop_front();
+    } else if (_cmp > 0) {
+      res.push_back(data_r);
+      rope_r.pop_front();
+    } else {
+      res.push_back(data_l);
+      aggregate(res.back(), data_r);
+      rope_l.pop_front();
+      rope_r.pop_front();
+    }
+  }
+  while(!rope_l.empty()) {
+    res.push_back(rope_l.front());
+    rope_l.pop_front();
+  }
+  while(!rope_r.empty()) {
+    res.push_back(rope_r.front());
+    rope_r.pop_front();
+  }
+}
+
+template <typename rope_t, typename compare_t, typename aggregate_t /*= no_aggregate_t<class rope_t::data_type>*/ >
+void sort_aggregate(
+  rope_t &rope,
+  const compare_t &compare,
+  const aggregate_t &aggregate
+) {
+  rope_t tmp;
+  
+  for (size_t chunk_size = 1;; chunk_size *= 2) {
+    typename rope_t::iterator it_l = rope.begin();
+    typename rope_t::iterator it_r = rope.begin();
+    for (size_t i = 0; i < chunk_size; ++i) {
+      ++it_r;
+    }
+    typename rope_t::iterator end_l = it_r;
+    
+    char* anchor = push_marker(tmp);
+    merge_aggregate(it_l, it_r, chunk_size, tmp);
+
+  }
+}
