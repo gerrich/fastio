@@ -166,16 +166,30 @@ struct child_handler_t : public fd_handler_base_t {
     clear_pfx();
     return 0;
   }
-
+  int set_pfx(void* data, size_t sz) {
+    clear_pfx();
+    pfx_data = malloc(sz);
+    if (pfx_data == NULL) return -1;
+    pfx_sz = sz;
+    memcpy(pfx_data, data, sz);
+    return 0;
+  }
   virtual int on_read(void* data, ssize_t sz) {
     void *it = memchr(data,'\n', sz);
     void *it_last = it ? memrchr((void*)(1 + (char*)it), '\n', sz) : NULL;
 
-    
+    printf("on_read on child ... \n"); 
     if (!it) {
       // skip long lines
-      clear_pfx();
-      skip_flag = true;
+      if (pfx_sz) skip_flag = true;
+
+      if (skip_flag) {
+        clear_pfx();
+      } else {
+        if(-1 == set_pfx(data, sz)) {
+          return -1;
+        }
+      }
       return 0;
     } else {
       if (!skip_flag) {
@@ -195,7 +209,7 @@ struct child_handler_t : public fd_handler_base_t {
         clear_pfx();
         skip_flag = false;
         write(fd_out, it, (char*)it_last - (char*)it);
- 
+        printf("write %zu bytes to %d\n", (char*)it_last - (char*)it, fd_out); 
         size_t len = (char*)it_last - (char*)data;
         pfx_data = malloc(sz - len);
         if (pfx_data) {
@@ -235,19 +249,21 @@ int split_input(int in_fd, int out_fd, int *child_in_fds, int *child_out_fds, in
     int res = process_fd(&fds[0], fds.size(), callback_handler);
     printf("... process fds %d\n", res);
     if (res == -1) {
+      free(buff);
       return -1;
-      // error
-    } //else if (res == 0) {
-      //return 0; 
-      // eof
-    //} // else  continue;
+    }
+    
     int closed_cnt = 0;
     for(int i = 0; i < fds.size(); ++i) {
       if(fds[i] == -1) ++closed_cnt;
     }
-    if (closed_cnt == fds.size()) return 0;
+    if (closed_cnt == fds.size()) {
+      free(buff);
+      return 0;
+    }
   }
   free(buff);
+  return 1;
 }
 
 int main() {
@@ -259,6 +275,9 @@ int main() {
   
   int pid = fork();
   if (pid) { // parent
+    if(-1 == close(in_pipe.fds[0])) {fprintf(stderr,"Can't close %d\n", in_pipe.fds[0]); return 1;}
+    if(-1 == close(out_pipe.fds[1])) {fprintf(stderr,"Can't close %d\n", out_pipe.fds[1]); return 1;}
+
     printf("child pid: %d\n", pid); 
     int child_in_fds[] = {in_pipe.fds[1]};
     int child_out_fds[] = {out_pipe.fds[0]};
@@ -268,26 +287,36 @@ int main() {
     close(out_pipe.fds[0]); in_pipe.fds[0] = -1; 
     return res==0 ? 0 : 1;
   } else { // child
-    dup2(in_pipe.fds[0], 0);
-    dup2(out_pipe.fds[1], 1);
-    // exec("cat");
+    if(-1 == close(in_pipe.fds[1])) {fprintf(stderr,"Can't close %d\n", in_pipe.fds[1]); return 1;}
+    if(-1 == close(out_pipe.fds[0])) {fprintf(stderr,"Can't close %d\n", out_pipe.fds[0]); return 1;}
+    if(-1 == dup2(in_pipe.fds[0], 0)) {fprintf(stderr,"Can't dup 0\n"); return 1;}
+    if(-1 == dup2(out_pipe.fds[1], 1)) {fprintf(stderr,"Can't dup 1\n"); return 1;}
     
-    printf("running child...");     
+    int return_status =  system("cat");
+    /*
+    fprintf(stderr, "CHILD: running child...\n");     
     size_t buff_len = 1024 * 32;
     char *buff = new char[buff_len];
     while(true) {
+      fprintf(stderr, "CHILD: reading ...\n"); 
       ssize_t read_sz = read(0, (void*)buff, buff_len);
       if (read_sz == 0) {
+        fprintf(stderr, "CHILD: 0 bytes read from %d\n", 0);
         break; // eof
       } else if (read_sz == -1) {
-        printf("error on read\n");
+        fprintf(stderr, "CHILD: error on read\n");
         return 1; // error
       } else {
+        fprintf(stderr, "CHILD: %zu bytes read from %d\n", read_sz, 0);
         write(1, (void*)buff, read_sz);
       }
     }
-    
-    //return system("cat");
+    */
+    //close(in_pipe.fds[0]);
+    //close(out_pipe.fds[1]);
+    close(0);
+    close(1);    
+    return return_status;
   }
 
   return 0;
