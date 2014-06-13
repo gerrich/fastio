@@ -9,3 +9,4 @@ add_executable(aggregate aggregate.cpp)
 
 add_executable(dup_test dup_test.cpp)
 add_executable(pipe_test pipe_test.cpp)
+add_executable(pp splitter.cpp)
