@@ -146,7 +146,8 @@ struct cin_handler_t : public fd_handler_base_t {
 };
 
 void* memrchr(void *data, char ch, int sz) {
-  for (char *it = sz + (char*)data; it != (char*)data; --it) {
+  if (sz == 0) return NULL;
+  for (char *it = sz - 1 + (char*)data; it != (char*)data - 1; --it) {
     if (*it == ch) return (void*)it;
   }
   return NULL;
@@ -170,7 +171,7 @@ struct child_handler_t : public fd_handler_base_t {
   }
   virtual int on_read(void* data, ssize_t sz) {
     void *it = memchr(data,'\n', sz);
-    void *it_last = it ? memrchr((void*)(1 + (char*)it), '\n', sz) : NULL;
+    void *it_last = it ? memrchr((void*)(1 + (char*)it), '\n', sz - 1 - ((char*)it - (char*)data)) : NULL;
 
     if (!it) {
       // skip long lines
@@ -188,7 +189,7 @@ struct child_handler_t : public fd_handler_base_t {
       if (!skip_flag) {
         write(fd_out, pfx_data, pfx_sz);
         clear_pfx();
-        size_t len = it_last ? ((char*)it_last - (char*)data) : sz;
+        size_t len = it_last ? ((char*)it_last - (char*)data) + 1 : sz;
         write(fd_out, data, len);
        
         if (-1 == set_pfx(it_last, sz - len)) {
@@ -197,11 +198,14 @@ struct child_handler_t : public fd_handler_base_t {
       } else {
         clear_pfx();
         skip_flag = false;
-        write(fd_out, it, (char*)it_last - (char*)it);
-        size_t len = (char*)it_last - (char*)data;
+        size_t len_mid = it_last ? ((char*)it_last - (char*)it) : 0 ;
+        if (len_mid) write(fd_out, ((char*)it + 1), len_mid);
         
-        if (-1 == set_pfx(it_last, sz - len)) {
-          return -1;
+        if (it) {
+          size_t len = (char*)it + 1 - (char*)data + len_mid;
+          if (-1 == set_pfx(it_last, sz - len)) {
+            return -1;
+          }
         }
       }
       return 0;
@@ -291,7 +295,7 @@ int make_n_slaves(char *const argv[], size_t slave_count) {
       child_in_fds.push_back(slave.in_pipe.fds[1]);
       child_out_fds.push_back(slave.out_pipe.fds[0]);
     } else {
-      printf("run %s\n", argv[0]);
+      //printf("run %s\n", argv[0]);
       if(-1 == close(slave.in_pipe.fds[1])) {fprintf(stderr,"Can't close %d\n", slave.in_pipe.fds[1]); return 1;}
       if(-1 == close(slave.out_pipe.fds[0])) {fprintf(stderr,"Can't close %d\n", slave.out_pipe.fds[0]); return 1;}
     
@@ -300,7 +304,7 @@ int make_n_slaves(char *const argv[], size_t slave_count) {
       
       return execve(argv[0], argv, NULL);
     }
-    printf("spauned CHILD N %zu\n", i);
+//    printf("spauned CHILD N %zu\n", i);
   }
 
   for(size_t i = 0; i < slave_list.size(); ++i) {
@@ -332,7 +336,6 @@ int main(int argc, char **argv) {
   if (1 != sscanf(argv[1], "%u", &nproc)) {
     return 2; 
   }
-  printf("nproc = %d\n", nproc);
   int res = make_n_slaves(&argv[2], nproc);
   return res;
 }
