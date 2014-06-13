@@ -129,9 +129,9 @@ struct cin_handler_t : public fd_handler_base_t {
 
     for(;; child_id = (child_id + 1) % child_count) {
       child_t &child = child_list[child_id]; 
-      char* it = (char*)memchr((void*)last_it, '\n', sz);
+      char* it = (char*)memchr((void*)last_it, '\n', end - last_it);
       
-      size_t line_size = it ? it + 1 - last_it : end - last_it;
+      size_t line_size = it ? (it - last_it + 1) : (end - last_it);
       if (!line_size) break;
       ssize_t write_sz = write(child.fd, last_it, line_size);
       if (!it) break;
@@ -153,7 +153,10 @@ void* memrchr(void *data, char ch, int sz) {
   return NULL;
 }
 struct child_handler_t : public fd_handler_base_t {
-  child_handler_t(int _fd_out) :fd_out(_fd_out), pfx_data(NULL), pfx_sz(0), skip_flag(false) {}
+  child_handler_t(int _fd_out) :fd_out(_fd_out), pfx_data(NULL), pfx_sz(0), skip_flag(false) {
+    skip_str = "";
+    skip_sz = 0;  
+  }
 
   virtual int on_eof() {
     if (!skip_flag) write(fd_out, pfx_data, pfx_sz);
@@ -170,13 +173,16 @@ struct child_handler_t : public fd_handler_base_t {
     return 0;
   }
   virtual int on_read(void* data, ssize_t sz) {
-    void *it = memchr(data,'\n', sz);
-    void *it_last = it ? memrchr((void*)(1 + (char*)it), '\n', sz - 1 - ((char*)it - (char*)data)) : NULL;
+    char *it = (char*)memchr(data,'\n', sz);
+    char *it_last = it ? (char*)memrchr((void*)(it + 1), '\n', sz - 1 - (it - (char*)data)) : NULL;
+    if (!it_last) it_last = it;
 
     if (!it) {
       // skip long lines
-      if (pfx_sz) skip_flag = true;
-
+      if (pfx_sz) {
+         if (!skip_flag && skip_sz) write(fd_out, skip_str, skip_sz);
+         skip_flag = true;
+      }
       if (skip_flag) {
         clear_pfx();
       } else {
@@ -189,21 +195,21 @@ struct child_handler_t : public fd_handler_base_t {
       if (!skip_flag) {
         write(fd_out, pfx_data, pfx_sz);
         clear_pfx();
-        size_t len = it_last ? ((char*)it_last - (char*)data) + 1 : sz;
+        size_t len = it_last ? (it_last - (char*)data) + 1 : 0;
         write(fd_out, data, len);
        
-        if (-1 == set_pfx(it_last, sz - len)) {
+        if (-1 == set_pfx(it_last + 1, sz - len)) {
           return -1;
         }
       } else {
         clear_pfx();
         skip_flag = false;
-        size_t len_mid = it_last ? ((char*)it_last - (char*)it) : 0 ;
-        if (len_mid) write(fd_out, ((char*)it + 1), len_mid);
+        size_t len_mid = it_last ? (it_last - it) : 0 ;
+        if (len_mid) write(fd_out, (it + 1), len_mid);
         
         if (it) {
-          size_t len = (char*)it + 1 - (char*)data + len_mid;
-          if (-1 == set_pfx(it_last, sz - len)) {
+          size_t len = it + 1 - (char*)data - len_mid;
+          if (-1 == set_pfx(it_last ? it_last + 1 : it + 1, sz - len)) {
             return -1;
           }
         }
@@ -220,6 +226,8 @@ struct child_handler_t : public fd_handler_base_t {
   void *pfx_data;
   size_t pfx_sz;
   bool skip_flag;
+  const char *skip_str;
+  size_t skip_sz;
 };
 
 int split_input(int in_fd, int out_fd, int *child_in_fds, int *child_out_fds, int child_count) {
